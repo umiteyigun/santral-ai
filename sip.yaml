@@ -1,0 +1,49 @@
+sip:
+  bind_address: "0.0.0.0"
+  # Bu makinenin dışarıdan erişilen IPv4 adresi (senin Mac'in IP'si)
+  external_ipv4: "192.168.100.100"
+  auto_subscribe: true
+  logging:
+    level: debug
+
+  # RTP port aralığı – docker-compose.yml ile eşleşiyor (40000-40100)
+  rtp_port_start: 40000
+  rtp_port_end: 40100
+
+  # Şifre yok, sadece IP allowlist; flood korumasını tamamen kapat
+  security:
+    defense:
+      level: "none"
+  flood_protection:
+    enabled: false
+
+trunks:
+  - id: "pbx-trunk"
+    name: "PBX 1001"
+    # Santralden çağrılan numara
+    numbers: ["1001"]
+    # Hangi IP'lerden gelen SIP INVITE kabul edilecek
+    inbound_addresses:
+      - "192.168.9.139/32"    # Santral IP'n
+      - "192.168.9.0/24"      # Aynı LAN'daki diğer cihazlar (isteğe bağlı)
+      - "192.168.65.0/24"     # Docker NAT ağı (fromIP 192.168.65.1 için)
+    # SIP arayanın LiveKit içindeki participant identity'si
+    participant_identity: "sip_{{fromUser}}"
+
+redis:
+  # docker-compose içindeki redis servisine göre
+  address: "redis:6379"
+  username: ""
+  password: ""
+  db: 0
+
+dispatch_rules:
+  # Basit: tüm çağrıları tek bir odaya at
+  - name: "Global Catch-All"
+    rule: 'true'
+    priority: 100
+    room: "support-room"
+    identity: "sip_{{fromUser}}"
+    can_subscribe: true
+
+

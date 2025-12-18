@@ -1,0 +1,44 @@
+events {
+    worker_connections 1024;
+}
+
+http {
+    upstream livekit {
+        server livekit:7880;
+    }
+
+    upstream web {
+        server web-ui:3000;
+    }
+
+    # HTTP server (development only - no SSL)
+    server {
+        listen 80;
+        server_name localhost;
+
+        # Web UI
+        location / {
+            proxy_pass http://web;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_cache_bypass $http_upgrade;
+        }
+
+        # LiveKit WebSocket
+        location /livekit/ {
+            rewrite ^/livekit/(.*) /$1 break;
+            
+            proxy_pass http://livekit;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_read_timeout 86400s;
+            proxy_send_timeout 86400s;
+            proxy_buffering off;
+        }
+    }
+}
+

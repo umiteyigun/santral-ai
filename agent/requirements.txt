@@ -1,0 +1,6 @@
+livekit-agents
+livekit
+webrtcvad
+requests
+numpy
+

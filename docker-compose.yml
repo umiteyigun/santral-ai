@@ -1,0 +1,184 @@
+version: '3.8'
+
+services:
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: livekit-server
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml
+    command: --config /etc/livekit.yaml
+    restart: unless-stopped
+    networks:
+      - sohbet-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:7880/"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:alpine
+    container_name: redis
+    command: redis-server --bind 0.0.0.0 --protected-mode no
+    restart: unless-stopped
+    networks:
+      - sohbet-network
+
+  sip-init:
+    image: python:3.10-slim
+    container_name: sip-init
+    volumes:
+      - ./setup_sip.py:/app/setup_sip.py
+    working_dir: /app
+    command: >
+      sh -c "
+        pip install livekit-server-sdk &&
+        python3 setup_sip.py
+      "
+    environment:
+      - LIVEKIT_URL=http://livekit:7880
+      - API_KEY=devkey
+      - API_SECRET=secret
+    networks:
+      - sohbet-network
+    depends_on:
+      livekit:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: "no"
+
+  sip:
+    image: livekit/sip
+    container_name: livekit-sip
+    restart: unless-stopped
+    networks:
+      - sohbet-network
+    volumes:
+      - ./sip.yaml:/sip/config.yaml
+    environment:
+      - LIVEKIT_API_KEY=devkey
+      - LIVEKIT_API_SECRET=secret
+      - LIVEKIT_URL=ws://livekit:7880
+      - LIVEKIT_WS_URL=ws://livekit:7880
+      - SIP_CONFIG_FILE=/sip/config.yaml
+      - LOG_LEVEL=debug
+      - SIP_FLOOD_PROTECTION_INVITES_PER_SECOND=1000
+      - SIP_FLOOD_PROTECTION_INVITES_BURST=1000
+    depends_on:
+      - livekit
+      - redis
+      - sip-init
+    ports:
+      # SIP sinyalleme
+      - "5060:5060/udp"
+      # RTP port aralığı (sip.yaml ile uyumlu olmalı)
+      - "40000-40100:40000-40100/udp"
+
+  sip-agent-dispatcher:
+    image: python:3.10-slim
+    container_name: sip-agent-dispatcher
+    volumes:
+      - ./sip_agent_dispatcher.py:/app/sip_agent_dispatcher.py
+    working_dir: /app
+    command: >
+      sh -c "
+        pip install --quiet requests pyjwt &&
+        python3 sip_agent_dispatcher.py
+      "
+    environment:
+      - LIVEKIT_URL=http://livekit:7880
+      - API_KEY=devkey
+      - API_SECRET=secret
+    networks:
+      - sohbet-network
+    depends_on:
+      livekit:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  stt-service:
+    build:
+      context: ./stt_service
+      dockerfile: Dockerfile
+    container_name: stt-service
+    environment:
+      - WHISPER_MODEL=small
+      - WHISPER_DEVICE=cpu
+      - WHISPER_COMPUTE_TYPE=int8
+    ports:
+      - "8030:8030"
+    restart: unless-stopped
+    volumes:
+      - ./ses:/app/ses
+    networks:
+      - sohbet-network
+
+  agent:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    container_name: voice-agent
+    environment:
+      - LIVEKIT_URL=ws://livekit:7880
+      - LIVEKIT_API_KEY=devkey
+      - LIVEKIT_API_SECRET=secret
+      - OLLAMA_URL=http://host.docker.internal:11434/api/generate
+      - OLLAMA_MODEL=ytagalar/trendyol-llm-7b-chat-dpo-v1.0-gguf:latest
+      - XTTS_API_URL=http://host.docker.internal:8020/tts
+      - STT_API_URL=http://stt-service:8030/transcribe
+    volumes:
+      - ./.cursor:/app/.cursor
+      - ./ses:/app/ses
+    depends_on:
+      - livekit
+      - stt-service
+    restart: unless-stopped
+    networks:
+      - sohbet-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - livekit
+      - web
+    restart: unless-stopped
+    networks:
+      - sohbet-network
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: web-ui
+    environment:
+      - NEXT_PUBLIC_LIVEKIT_URL=wss://localhost/livekit
+      - LIVEKIT_API_KEY=devkey
+      - LIVEKIT_API_SECRET=secret
+      - LIVEKIT_URL=http://livekit:7880
+    depends_on:
+      - livekit
+    restart: unless-stopped
+    networks:
+      - sohbet-network
+
+networks:
+  sohbet-network:
+    driver: bridge
+
