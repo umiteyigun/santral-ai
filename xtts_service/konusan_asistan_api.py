@@ -142,6 +142,55 @@ def get_active_reference_voice():
     
     raise FileNotFoundError(f"Active reference voice not found: {active_voice}")
 
+def split_text_for_xtts(text: str, max_chars: int = 200) -> list:
+    """
+    Split text into chunks that XTTS can handle.
+    XTTS has a token limit (~400 tokens), which roughly equals ~200-300 characters for Turkish.
+    We'll split by sentences first, then by max_chars if needed.
+    """
+    # First, try to split by sentences (., !, ?, \n)
+    import re
+    sentences = re.split(r'([.!?]\s+|\n+)', text)
+    
+    # Combine sentences back with their punctuation
+    chunks = []
+    current_chunk = ""
+    
+    for i in range(0, len(sentences), 2):
+        sentence = sentences[i] + (sentences[i+1] if i+1 < len(sentences) else "")
+        
+        # If adding this sentence would exceed limit, save current chunk
+        if current_chunk and len(current_chunk) + len(sentence) > max_chars:
+            chunks.append(current_chunk.strip())
+            current_chunk = sentence
+        else:
+            current_chunk += sentence
+    
+    # Add remaining chunk
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+    
+    # If any chunk is still too long, split it further
+    final_chunks = []
+    for chunk in chunks:
+        if len(chunk) > max_chars:
+            # Split by words
+            words = chunk.split()
+            current = ""
+            for word in words:
+                if len(current) + len(word) + 1 > max_chars:
+                    if current:
+                        final_chunks.append(current.strip())
+                    current = word
+                else:
+                    current += " " + word if current else word
+            if current:
+                final_chunks.append(current.strip())
+        else:
+            final_chunks.append(chunk)
+    
+    return final_chunks if final_chunks else [text[:max_chars]]
+
 def get_file_hash(file_path: str) -> str:
     """Calculate MD5 hash of file for cache key"""
     hash_md5 = hashlib.md5()
@@ -375,20 +424,50 @@ def generate_speech(
                         model = tts.synthesizer.model
                     
                     if model is not None and hasattr(model, 'inference'):
-                        out = model.inference(
-                            text=text,
-                            language=language,
-                            gpt_cond_latent=latents_dict["gpt_cond_latent"],
-                            speaker_embedding=latents_dict["speaker_embedding"]
-                        )
+                        # Check text length - XTTS has ~400 token limit (~200-300 chars for Turkish)
+                        # Split text if too long
+                        text_chunks = split_text_for_xtts(text, max_chars=250)
                         
-                        # Save audio - out["wav"] contains the audio array
-                        wav = out["wav"]
-                        sample_rate = out.get("sample_rate", 24000)
+                        if len(text_chunks) > 1:
+                            print(f"⚠️  Text too long ({len(text)} chars), splitting into {len(text_chunks)} chunks")
+                            # Generate audio for each chunk and concatenate
+                            all_wavs = []
+                            sample_rate = 24000
+                            
+                            for i, chunk in enumerate(text_chunks):
+                                print(f"  Generating chunk {i+1}/{len(text_chunks)}: '{chunk[:50]}...'")
+                                try:
+                                    out = model.inference(
+                                        text=chunk,
+                                        language=language,
+                                        gpt_cond_latent=latents_dict["gpt_cond_latent"],
+                                        speaker_embedding=latents_dict["speaker_embedding"]
+                                    )
+                                    all_wavs.append(out["wav"])
+                                    sample_rate = out.get("sample_rate", 24000)
+                                except Exception as e:
+                                    print(f"❌ Error generating chunk {i+1}: {e}")
+                                    raise
+                            
+                            # Concatenate all audio chunks
+                            import numpy as np
+                            wav = np.concatenate(all_wavs)
+                            print(f"✅ Generated {len(text_chunks)} chunks, total length: {len(wav)/sample_rate:.2f}s")
+                        else:
+                            # Single chunk - normal path
+                            out = model.inference(
+                                text=text,
+                                language=language,
+                                gpt_cond_latent=latents_dict["gpt_cond_latent"],
+                                speaker_embedding=latents_dict["speaker_embedding"]
+                            )
+                            wav = out["wav"]
+                            sample_rate = out.get("sample_rate", 24000)
                         
+                        # Save audio
                         if sf is not None:
                             sf.write(output_path, wav, sample_rate)
-                            print(f"✅ Generated using cached embedding (sample_rate: {sample_rate})")
+                            print(f"✅ Generated using cached embedding (sample_rate: {sample_rate}, duration: {len(wav)/sample_rate:.2f}s)")
                         else:
                             # Fallback: use scipy
                             import scipy.io.wavfile as wavfile
@@ -400,31 +479,96 @@ def generate_speech(
                     print(f"⚠️  model.inference() failed ({e}), falling back to tts_to_file")
                     import traceback
                     traceback.print_exc()
-                    # Fallback to standard method
-                    tts.tts_to_file(
-                        text=text,
-                        speaker_wav=ref_wav,
-                        language=language,
-                        file_path=output_path
-                    )
+                    # Fallback to standard method with text splitting
+                    text_chunks = split_text_for_xtts(text, max_chars=250)
+                    if len(text_chunks) > 1:
+                        print(f"⚠️  Text too long, splitting into {len(text_chunks)} chunks for tts_to_file")
+                        import numpy as np
+                        all_wavs = []
+                        sample_rate = 24000
+                        for i, chunk in enumerate(text_chunks):
+                            chunk_path = output_path.replace('.wav', f'_chunk_{i}.wav')
+                            tts.tts_to_file(text=chunk, speaker_wav=ref_wav, language=language, file_path=chunk_path)
+                            if sf is not None:
+                                wav_data, sr = sf.read(chunk_path)
+                                all_wavs.append(wav_data)
+                                sample_rate = sr
+                            else:
+                                import scipy.io.wavfile as wavfile
+                                sr, wav_data = wavfile.read(chunk_path)
+                                all_wavs.append(wav_data.astype(np.float32) / 32767.0)
+                                sample_rate = sr
+                            os.remove(chunk_path)
+                        wav = np.concatenate(all_wavs)
+                        if sf is not None:
+                            sf.write(output_path, wav, sample_rate)
+                        else:
+                            import scipy.io.wavfile as wavfile
+                            wavfile.write(output_path, sample_rate, (wav * 32767).astype(np.int16))
+                    else:
+                        tts.tts_to_file(text=text, speaker_wav=ref_wav, language=language, file_path=output_path)
             else:
                 print("⚠️  Invalid latents format, using standard method")
-                tts.tts_to_file(
-                    text=text,
-                    speaker_wav=ref_wav,
-                    language=language,
-                    file_path=output_path
-                )
+                text_chunks = split_text_for_xtts(text, max_chars=250)
+                if len(text_chunks) > 1:
+                    print(f"⚠️  Text too long, splitting into {len(text_chunks)} chunks")
+                    import numpy as np
+                    all_wavs = []
+                    sample_rate = 24000
+                    for i, chunk in enumerate(text_chunks):
+                        chunk_path = output_path.replace('.wav', f'_chunk_{i}.wav')
+                        tts.tts_to_file(text=chunk, speaker_wav=ref_wav, language=language, file_path=chunk_path)
+                        if sf is not None:
+                            wav_data, sr = sf.read(chunk_path)
+                            all_wavs.append(wav_data)
+                            sample_rate = sr
+                        else:
+                            import scipy.io.wavfile as wavfile
+                            sr, wav_data = wavfile.read(chunk_path)
+                            all_wavs.append(wav_data.astype(np.float32) / 32767.0)
+                            sample_rate = sr
+                        os.remove(chunk_path)
+                    wav = np.concatenate(all_wavs)
+                    if sf is not None:
+                        sf.write(output_path, wav, sample_rate)
+                    else:
+                        import scipy.io.wavfile as wavfile
+                        wavfile.write(output_path, sample_rate, (wav * 32767).astype(np.int16))
+                else:
+                    tts.tts_to_file(text=text, speaker_wav=ref_wav, language=language, file_path=output_path)
         else:
             # Embedding None ise standard method kullan
             print("⚠️  Using standard tts_to_file method (embedding cache not available)")
             print("⚠️  This will be slower as embedding will be recomputed each time")
-            tts.tts_to_file(
-                text=text,
-                speaker_wav=ref_wav,
-                language=language,
-                file_path=output_path
-            )
+            text_chunks = split_text_for_xtts(text, max_chars=250)
+            if len(text_chunks) > 1:
+                print(f"⚠️  Text too long ({len(text)} chars), splitting into {len(text_chunks)} chunks")
+                import numpy as np
+                all_wavs = []
+                sample_rate = 24000
+                for i, chunk in enumerate(text_chunks):
+                    print(f"  Generating chunk {i+1}/{len(text_chunks)}: '{chunk[:50]}...'")
+                    chunk_path = output_path.replace('.wav', f'_chunk_{i}.wav')
+                    tts.tts_to_file(text=chunk, speaker_wav=ref_wav, language=language, file_path=chunk_path)
+                    if sf is not None:
+                        wav_data, sr = sf.read(chunk_path)
+                        all_wavs.append(wav_data)
+                        sample_rate = sr
+                    else:
+                        import scipy.io.wavfile as wavfile
+                        sr, wav_data = wavfile.read(chunk_path)
+                        all_wavs.append(wav_data.astype(np.float32) / 32767.0)
+                        sample_rate = sr
+                    os.remove(chunk_path)
+                wav = np.concatenate(all_wavs)
+                if sf is not None:
+                    sf.write(output_path, wav, sample_rate)
+                else:
+                    import scipy.io.wavfile as wavfile
+                    wavfile.write(output_path, sample_rate, (wav * 32767).astype(np.int16))
+                print(f"✅ Generated {len(text_chunks)} chunks, total duration: {len(wav)/sample_rate:.2f}s")
+            else:
+                tts.tts_to_file(text=text, speaker_wav=ref_wav, language=language, file_path=output_path)
         
         print("Generation complete.")
         

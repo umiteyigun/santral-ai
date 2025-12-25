@@ -10,5 +10,11 @@
     "cache_file": "embedding_526bf138059377dc45b71d10630777c8.pth",
     "timestamp": 1766655129.636752,
     "file_size": 1990494
+  },
+  "/Users/umiteyigun/projeler/sohbet_local/xtts_service/reference_voices/reference2.wav": {
+    "hash": "5a7db0cfd474842e10fdf1139da15c01",
+    "cache_file": "embedding_5a7db0cfd474842e10fdf1139da15c01.pth",
+    "timestamp": 1766655129.6312282,
+    "file_size": 2837214
   }
 }

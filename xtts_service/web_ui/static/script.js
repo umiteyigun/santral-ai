@@ -17,6 +17,9 @@ document.addEventListener('DOMContentLoaded', () => {
 async function loadActiveVoice() {
     try {
         const response = await fetch(`${API_URL}/voices/active`);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
         const data = await response.json();
         
         const activeVoiceInfo = document.getElementById('activeVoiceInfo');
@@ -58,6 +61,9 @@ async function loadActiveVoice() {
 async function loadVoices() {
     try {
         const response = await fetch(`${API_URL}/voices`);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
         const data = await response.json();
         
         const voicesList = document.getElementById('voicesList');
@@ -73,6 +79,9 @@ async function loadVoices() {
                 ? '<span class="cache-badge cached">✅ Aktif</span>'
                 : '';
             
+            // Escape filename for JavaScript (prevent XSS and syntax errors)
+            const safeFilename = voice.filename.replace(/'/g, "\\'").replace(/"/g, '\\"');
+            
             return `
                 <div class="voice-item ${isActive ? 'active' : ''}">
                     <div class="voice-info">
@@ -85,7 +94,7 @@ async function loadVoices() {
                     </div>
                     <div class="voice-actions">
                         ${!isActive ? `
-                            <button class="btn btn-success" onclick="setActiveVoice('${voice.filename}')">
+                            <button class="btn btn-success set-active-btn" data-filename="${safeFilename}">
                                 ✅ Aktif Yap
                             </button>
                         ` : ''}
@@ -93,19 +102,46 @@ async function loadVoices() {
                 </div>
             `;
         }).join('');
+        
+        // Event delegation: Add click listeners to all "Aktif Yap" buttons
+        voicesList.querySelectorAll('.set-active-btn').forEach(btn => {
+            const filename = btn.getAttribute('data-filename');
+            if (filename) {
+                // Remove old listeners
+                const newBtn = btn.cloneNode(true);
+                btn.parentNode.replaceChild(newBtn, btn);
+                
+                newBtn.addEventListener('click', async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log('Button clicked, filename:', filename);
+                    // Store event for setActiveVoice
+                    window.currentEvent = e;
+                    await setActiveVoice(filename);
+                });
+            }
+        });
     } catch (error) {
         document.getElementById('voicesList').innerHTML = 
             `<div style="color: #ef4444;">❌ Hata: ${error.message}</div>`;
     }
 }
 
-// Aktif sesi değiştir
-async function setActiveVoice(filename) {
-    if (!confirm(`"${filename}" dosyasını aktif ses olarak ayarlamak istediğinize emin misiniz?`)) {
-        return;
+// Aktif sesi değiştir - Global scope'ta olmalı (onclick için)
+window.setActiveVoice = async function(filename) {
+    console.log('setActiveVoice called with:', filename);
+    
+    // Butonu disable et (çift tıklamayı önle)
+    const clickedBtn = window.currentEvent?.target || document.querySelector(`[data-filename="${filename}"]`);
+    if (clickedBtn) {
+        clickedBtn.disabled = true;
+        const originalText = clickedBtn.textContent;
+        clickedBtn.textContent = '⏳ Değiştiriliyor...';
     }
     
     try {
+        console.log('Sending request to:', `${API_URL}/voices/set-active`);
+        console.log('Request payload:', { voice_filename: filename });
         const response = await fetch(`${API_URL}/voices/set-active`, {
             method: 'POST',
             headers: {
@@ -114,18 +150,57 @@ async function setActiveVoice(filename) {
             body: JSON.stringify({ voice_filename: filename })
         });
         
-        const data = await response.json();
+        console.log('Response status:', response.status);
+        console.log('Response headers:', response.headers);
         
-        if (response.ok) {
-            alert(`✅ Başarılı!\n\nEski ses: ${data.old_voice}\nYeni ses: ${data.active_voice}\n\nYeni ses ile TTS istekleri artık bu sesi kullanacak.`);
-            loadActiveVoice();
-            loadVoices();
-            loadCacheInfo();
+        let data;
+        try {
+            const text = await response.text();
+            console.log('Response text:', text);
+            data = JSON.parse(text);
+            console.log('Response data:', data);
+        } catch (parseError) {
+            console.error('JSON parse error:', parseError);
+            alert(`❌ Yanıt parse edilemedi. Status: ${response.status}`);
+            return;
+        }
+        
+        if (response.ok && data.success) {
+            console.log('✅ Voice changed successfully:', data);
+            // UI'yi güncelle
+            await Promise.all([
+                loadActiveVoice(),
+                loadVoices(),
+                loadCacheInfo()
+            ]);
+            console.log('✅ UI updated successfully');
+            // Başarı mesajı göster
+            if (clickedBtn) {
+                clickedBtn.textContent = '✅ Aktif!';
+                setTimeout(() => {
+                    if (clickedBtn) {
+                        clickedBtn.textContent = '✅ Aktif Yap';
+                        clickedBtn.disabled = false;
+                    }
+                }, 2000);
+            }
         } else {
-            alert(`❌ Hata: ${data.detail || 'Bilinmeyen hata'}`);
+            const errorMsg = data.detail || data.message || 'Bilinmeyen hata';
+            console.error('API Error:', errorMsg, data);
+            alert(`❌ Hata: ${errorMsg}`);
+            if (clickedBtn) {
+                clickedBtn.disabled = false;
+                clickedBtn.textContent = '✅ Aktif Yap';
+            }
         }
     } catch (error) {
+        console.error('Error in setActiveVoice:', error);
+        console.error('Error stack:', error.stack);
         alert(`❌ Hata: ${error.message}`);
+        if (clickedBtn) {
+            clickedBtn.disabled = false;
+            clickedBtn.textContent = '✅ Aktif Yap';
+        }
     }
 }
 
@@ -238,13 +313,13 @@ async function loadCacheInfo() {
     }
 }
 
-// Yenileme fonksiyonları
-function refreshVoices() {
+// Yenileme fonksiyonları - Global scope'ta olmalı (onclick için)
+window.refreshVoices = function() {
     loadVoices();
     loadActiveVoice();
 }
 
-function refreshCache() {
+window.refreshCache = function() {
     loadCacheInfo();
 }
 
