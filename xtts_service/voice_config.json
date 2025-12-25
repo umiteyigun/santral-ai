@@ -1,0 +1,20 @@
+{
+  "active_voice": "reference3.wav",
+  "voices": {
+    "reference.wav": {
+      "name": "Default Voice",
+      "path": "reference.wav",
+      "description": "Default reference voice"
+    },
+    "reference2.wav": {
+      "name": "Voice 2",
+      "path": "reference2.wav",
+      "description": "Second reference voice"
+    },
+    "reference3.wav": {
+      "name": "Voice 3",
+      "path": "reference3.wav",
+      "description": "Third reference voice"
+    }
+  }
+}

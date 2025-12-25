@@ -1,0 +1,14 @@
+{
+  "/Users/umiteyigun/projeler/sohbet_local/xtts_service/reference_voices/reference.wav": {
+    "hash": "3fb10f29aceb9db2af4fdde55ecafc4f",
+    "cache_file": "embedding_3fb10f29aceb9db2af4fdde55ecafc4f.pth",
+    "timestamp": 1766655129.6263134,
+    "file_size": 1589198
+  },
+  "/Users/umiteyigun/projeler/sohbet_local/xtts_service/reference_voices/reference3.wav": {
+    "hash": "526bf138059377dc45b71d10630777c8",
+    "cache_file": "embedding_526bf138059377dc45b71d10630777c8.pth",
+    "timestamp": 1766655129.636752,
+    "file_size": 1990494
+  }
+}

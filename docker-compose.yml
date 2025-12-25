@@ -130,8 +130,11 @@ services:
       - LIVEKIT_URL=ws://livekit:7880
       - LIVEKIT_API_KEY=devkey
       - LIVEKIT_API_SECRET=secret
+      - LLM_PROVIDER=lm_studio
       - OLLAMA_URL=http://host.docker.internal:11434/api/generate
       - OLLAMA_MODEL=ytagalar/trendyol-llm-7b-chat-dpo-v1.0-gguf:latest
+      - LM_STUDIO_URL=http://host.docker.internal:1234/v1/chat/completions
+      - LM_STUDIO_MODEL=mistralai/ministral-3-3b
       - XTTS_API_URL=http://host.docker.internal:8020/tts
       - STT_API_URL=http://stt-service:8030/transcribe
     volumes:

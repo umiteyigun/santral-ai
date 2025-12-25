@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XTTS Referans Ses Yönetimi</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎤 XTTS Referans Ses Yönetimi</h1>
+            <p class="subtitle">Referans ses dosyalarını yönetin ve aktif sesi değiştirin</p>
+        </header>
+
+        <!-- Aktif Ses Bilgisi -->
+        <section class="card active-voice-card">
+            <h2>✅ Aktif Ses</h2>
+            <div id="activeVoiceInfo" class="active-voice-info">
+                <div class="loading">Yükleniyor...</div>
+            </div>
+        </section>
+
+        <!-- Ses Listesi -->
+        <section class="card">
+            <div class="card-header">
+                <h2>📋 Mevcut Sesler</h2>
+                <button class="btn btn-primary" onclick="refreshVoices()">🔄 Yenile</button>
+            </div>
+            <div id="voicesList" class="voices-list">
+                <div class="loading">Yükleniyor...</div>
+            </div>
+        </section>
+
+        <!-- Yeni Ses Yükle -->
+        <section class="card">
+            <h2>📤 Yeni Ses Yükle</h2>
+            <form id="uploadForm" class="upload-form">
+                <div class="form-group">
+                    <label for="voiceFile">Ses Dosyası (WAV, MP3, FLAC):</label>
+                    <input type="file" id="voiceFile" accept=".wav,.mp3,.flac" required>
+                </div>
+                <div class="form-group">
+                    <label for="voiceName">İsim (opsiyonel):</label>
+                    <input type="text" id="voiceName" placeholder="Örn: Kadın Ses">
+                </div>
+                <div class="form-group">
+                    <label for="voiceDescription">Açıklama (opsiyonel):</label>
+                    <textarea id="voiceDescription" rows="3" placeholder="Ses hakkında açıklama"></textarea>
+                </div>
+                <button type="submit" class="btn btn-success">📤 Yükle</button>
+            </form>
+            <div id="uploadStatus" class="status-message"></div>
+        </section>
+
+        <!-- Cache Bilgisi -->
+        <section class="card">
+            <div class="card-header">
+                <h2>💾 Cache Durumu</h2>
+                <button class="btn btn-secondary" onclick="refreshCache()">🔄 Yenile</button>
+            </div>
+            <div id="cacheInfo" class="cache-info">
+                <div class="loading">Yükleniyor...</div>
+            </div>
+        </section>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
+

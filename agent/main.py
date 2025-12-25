@@ -43,8 +43,12 @@ def debug_log(location, message, data=None, hypothesis_id=None):
 # #endregion
 
 # ===== CONFIGURATION =====
+# LLM Provider: "ollama" or "lm_studio"
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")  # "ollama" or "lm_studio"
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434/api/generate")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "ytagalar/trendyol-llm-7b-chat-dpo-v1.0-gguf:latest")
+LM_STUDIO_URL = os.getenv("LM_STUDIO_URL", "http://host.docker.internal:1234/v1/chat/completions")
+LM_STUDIO_MODEL = os.getenv("LM_STUDIO_MODEL", "mistralai/ministral-3-3b")
 XTTS_API_URL = os.getenv("XTTS_API_URL", "http://host.docker.internal:8020/tts")
 STT_API_URL = os.getenv("STT_API_URL", "http://stt-service:8030/transcribe")
 WEB_API_URL = os.getenv("WEB_API_URL", "http://web-ui:3000/api/agent-message")
@@ -119,6 +123,48 @@ async def call_ollama(user_text: str) -> str:
         logger.error(f"❌ [call_ollama] Ollama error: {e}", exc_info=True)
         return "Üzgünüm, bir hata oluştu."
 
+async def call_lm_studio(user_text: str) -> str:
+    """Call LM Studio (OpenAI-compatible API)"""
+    try:
+        logger.info(f"🤖 [call_lm_studio] Starting - URL: {LM_STUDIO_URL}, text length: {len(user_text)}")
+        loop = asyncio.get_event_loop()
+        
+        def _make_lm_studio_request():
+            logger.info(f"🤖 [call_lm_studio] Making HTTP POST request...")
+            resp = requests.post(
+                LM_STUDIO_URL,
+                json={
+                    "model": LM_STUDIO_MODEL,
+                    "messages": [
+                        {"role": "user", "content": user_text}
+                    ],
+                    "max_tokens": 500,
+                    "temperature": 0.7,
+                    "stream": False
+                },
+                timeout=30
+            )
+            logger.info(f"🤖 [call_lm_studio] HTTP response status: {resp.status_code}")
+            resp.raise_for_status()
+            return resp.json()
+        
+        logger.info(f"🤖 [call_lm_studio] Running in executor...")
+        data = await loop.run_in_executor(None, _make_lm_studio_request)
+        # OpenAI-compatible response format
+        response_text = data.get("choices", [{}])[0].get("message", {}).get("content", "Üzgünüm, cevap veremedim.")
+        logger.info(f"🤖 [call_lm_studio] Response received: {len(response_text)} chars")
+        return response_text
+    except Exception as e:
+        logger.error(f"❌ [call_lm_studio] LM Studio error: {e}", exc_info=True)
+        return "Üzgünüm, bir hata oluştu."
+
+async def call_llm(user_text: str) -> str:
+    """Call LLM (Ollama or LM Studio based on LLM_PROVIDER)"""
+    if LLM_PROVIDER.lower() == "lm_studio":
+        return await call_lm_studio(user_text)
+    else:
+        return await call_ollama(user_text)
+
 async def call_xtts(text: str, output_file: str) -> bool:
     """Call local XTTS API - file is saved directly to shared ses/ directory"""
     try:
@@ -190,7 +236,11 @@ class VoiceAgent:
         logger.info(f"🚀 Starting agent for room: {self.ctx.room.name}")
         logger.info(f"📡 STT Service: {STT_API_URL}")
         logger.info(f"📡 XTTS Service: {XTTS_API_URL}")
-        logger.info(f"📡 Ollama: {OLLAMA_URL}")
+        logger.info(f"📡 LLM Provider: {LLM_PROVIDER}")
+        if LLM_PROVIDER.lower() == "lm_studio":
+            logger.info(f"📡 LM Studio: {LM_STUDIO_URL} (model: {LM_STUDIO_MODEL})")
+        else:
+            logger.info(f"📡 Ollama: {OLLAMA_URL} (model: {OLLAMA_MODEL})")
         
         await self.ctx.connect()
         # #region debug log
@@ -589,9 +639,9 @@ class VoiceAgent:
                 return
 
             # LLM
-            logger.info(f"🤖 Sending to Ollama: {text}")
-            response_text = await call_ollama(text)
-            logger.info(f"🤖 Ollama response: {response_text}")
+            logger.info(f"🤖 Sending to LLM ({LLM_PROVIDER}): {text}")
+            response_text = await call_llm(text)
+            logger.info(f"🤖 LLM response: {response_text}")
 
             # Save conversation to file for debugging
             conversation_file = "/tmp/conversation_log.txt"
